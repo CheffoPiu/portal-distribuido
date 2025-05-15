@@ -1,0 +1,48 @@
+name: CI/CD Portal Distribuido
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Build & Push image to Docker Hub
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/portal-distribuido:latest
+
+  deploy-to-ec2:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH key
+        run: |
+          echo "${{ secrets.EC2_SSH_KEY }}" > key.pem
+          chmod 600 key.pem
+
+      - name: SSH & update container on EC2
+        uses: appleboy/ssh-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          user: ec2-user                
+          key_path: key.pem
+          script: |
+            # Baja la última imagen
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/portal-distribuido:latest
+
+            # Detén y elimina el contenedor anterior (si existía)
+            docker stop portal || true
+            docker rm portal   || true
+
+            # Inicia el nuevo contenedor
+            docker run -d \
+              --name portal \
+              -p 80:80 \
+              ${{ secrets.DOCKERHUB_USERNAME }}/portal-distribuido:latest
